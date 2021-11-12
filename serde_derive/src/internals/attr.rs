@@ -425,6 +425,38 @@ impl Container {
                     }
                 }
 
+                // Parse `#[serde(default_expression = ...)]`
+                Meta(NameValue(m)) if m.path == DEFAULT => {
+                    if let Ok(path) = parse_lit_into_expr(cx, DEFAULT, &m.lit) {
+                        // TODO refactor common code with default
+                        match &item.data {
+                            syn::Data::Struct(syn::DataStruct { fields, .. }) => {
+                                match fields {
+                                    syn::Fields::Named(_) => {
+                                        default.set(&m.path, Default::Expression(path));
+                                    }
+                                    syn::Fields::Unnamed(_) | syn::Fields::Unit => cx
+                                        .error_spanned_by(
+                                            fields,
+                                            "#[serde(default_expression = \"...\")] can only be used on structs with named fields",
+                                        ),
+                                }
+                            }
+                            syn::Data::Enum(syn::DataEnum { enum_token, .. }) => cx
+                                .error_spanned_by(
+                                    enum_token,
+                                    "#[serde(default_expression = \"...\")] can only be used on structs with named fields",
+                                ),
+                            syn::Data::Union(syn::DataUnion {
+                                union_token, ..
+                            }) => cx.error_spanned_by(
+                                union_token,
+                                "#[serde(default_expression = \"...\")] can only be used on structs with named fields",
+                            ),
+                        }
+                    }
+                }
+
                 // Parse `#[serde(bound = "T: SomeBound")]`
                 Meta(NameValue(m)) if m.path == BOUND => {
                     if let Ok(where_predicates) = parse_lit_into_where(cx, BOUND, BOUND, &m.lit) {
@@ -1128,13 +1160,15 @@ pub enum Default {
     Default,
     /// The default is given by this function.
     Path(syn::ExprPath),
+    /// The default is given by this expression
+    Expression(syn::Expr),
 }
 
 impl Default {
     pub fn is_none(&self) -> bool {
         match self {
             Default::None => true,
-            Default::Default | Default::Path(_) => false,
+            Default::Default | Default::Path(_) | Default::Expression(_) => false,
         }
     }
 }
